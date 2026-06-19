@@ -48,6 +48,22 @@ export default function InfantProfile() {
     movement_index: null
   });
 
+  // Dynamic style helper for diagnostic risk tags
+  const getPredictionStyle = (label) => {
+    switch (label) {
+      case "High Risk":
+        return "text-rose-400";
+      case "Moderate Risk":
+        return "text-amber-400";
+      case "Healthy":
+      case "Stable":
+      case "Low Risk":
+        return "text-emerald-400";
+      default:
+        return "text-zinc-400";
+    }
+  };
+
   useEffect(() => {
     // Validate Auth Identity Clearance
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -101,18 +117,16 @@ export default function InfantProfile() {
     try {
       setLoading(true);
       
-      // Perform nested structural join across the split tables
+      // Perform nested structural join across the split tables including prediction history
       const { data, error } = await supabase
         .from("infants")
         .select(`
           *,
           infant_vitals ( * ),
-          infant_sensor_data (
-            temperature_c,
-            heart_rate_bpm,
-            respiratory_rate_bpm,
-            movement_index,
-            recorded_at
+          infant_sensor_data ( * ),
+          prediction_history (
+            prediction_label,
+            created_at
           )
         `)
         .eq("id", id)
@@ -120,7 +134,21 @@ export default function InfantProfile() {
 
       if (error) throw error;
       if (data) {
-        setInfant(data);
+        // Sort and extract the absolute latest classification framework record
+        let latestPrediction = null;
+
+        if (Array.isArray(data.prediction_history)) {
+          latestPrediction = data.prediction_history.length
+            ? data.prediction_history[0]
+            : null;
+        } else if (data.prediction_history) {
+          latestPrediction = data.prediction_history;
+        }
+
+        setInfant({
+          ...data,
+          latestPrediction,
+        });
         
         // Extract clinical vitals object row
         const vitalsRow = data.infant_vitals?.[0] || data.infant_vitals; 
@@ -170,7 +198,7 @@ export default function InfantProfile() {
     } catch (err) {
       console.error("Profile core extraction fault:", err.message);
     } finally {
-      setLoading(false);
+      loading && setLoading(false);
     }
   };
 
@@ -265,7 +293,15 @@ export default function InfantProfile() {
                   <User className="h-10 w-10 text-cyan-400" />
                 </div>
                 <h2 className="text-2xl font-bold tracking-tight text-white">{infant.name}</h2>
-                <span className="text-xs text-zinc-500 font-mono mt-0.5">{infant.device_id || "UNASSIGNED_NODE"}</span>
+                
+                {/* Dynamic AI Risk Prediction Layout */}
+                <div className="mt-3 font-mono">
+                  <span className={`font-bold text-sm ${getPredictionStyle(infant.latestPrediction?.prediction_label)}`}>
+                    {infant.latestPrediction?.prediction_label || "Undetermined"}
+                  </span>
+                </div>
+
+                <span className="text-xs text-zinc-500 font-mono mt-2">{infant.device_id || "UNASSIGNED_NODE"}</span>
 
                 <div className="w-full border-t border-zinc-800/80 my-4 pt-4 space-y-3.5 text-left text-xs font-mono text-zinc-400">
                   <div className="flex justify-between items-center bg-black/40 p-2.5 rounded-lg border border-zinc-800/60">

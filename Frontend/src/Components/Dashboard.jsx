@@ -102,14 +102,19 @@ export default function Dashboard() {
     });
   };
 
-  // Get prediction badge styling
+  // Get prediction badge styling (Supports High, Moderate, Low Risk, Healthy, or Stable)
   const getPredictionStyle = (label) => {
-    switch (label) {
-      case "High Risk":
+    const formattedLabel = label?.toLowerCase().trim();
+    switch (formattedLabel) {
+      case "high risk":
+      case "critical":
         return "bg-rose-950/30 border-rose-500/40 text-rose-400 shadow-[0_0_15px_rgba(244,63,94,0.15)]";
-      case "Moderate Risk":
+      case "moderate risk":
+      case "at risk":
         return "bg-amber-950/30 border-amber-500/40 text-amber-400 shadow-[0_0_10px_rgba(245,158,11,0.1)]";
-      case "Low Risk":
+      case "low risk":
+      case "healthy":
+      case "stable":
         return "bg-emerald-950/30 border-emerald-500/40 text-emerald-400 shadow-[0_0_10px_rgba(16,185,129,0.1)]";
       default:
         return "bg-zinc-800/40 border-zinc-600/40 text-zinc-400";
@@ -143,14 +148,23 @@ export default function Dashboard() {
     );
   }
 
-  // Safe checks for arrays before calculating status metrics
-  const stableCount = infants.filter(
-    (i) => Array.isArray(i.prediction_history) && i.prediction_history[0]?.prediction_label !== "High Risk"
-  ).length;
+  // UPDATED: Stable filter handling structural variants safely
+  const stableCount = infants.filter((i) => {
+    const p = Array.isArray(i.prediction_history)
+      ? i.prediction_history[0]
+      : i.prediction_history;
 
-  const highRiskCount = infants.filter(
-    (i) => Array.isArray(i.prediction_history) && i.prediction_history[0]?.prediction_label === "High Risk"
-  ).length;
+    return p?.prediction_label !== "High Risk";
+  }).length;
+
+  // UPDATED: High Risk filter handling structural variants safely
+  const highRiskCount = infants.filter((i) => {
+    const p = Array.isArray(i.prediction_history)
+      ? i.prediction_history[0]
+      : i.prediction_history;
+
+    return p?.prediction_label === "High Risk";
+  }).length;
 
   return (
     <>
@@ -211,7 +225,6 @@ export default function Dashboard() {
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {infants.map((infant) => {
-                // FIXED: Handle fallback safely whether it's returning an object directly or an array
                 let latestSensor = {};
                 if (infant.infant_sensor_data) {
                   if (Array.isArray(infant.infant_sensor_data)) {
@@ -224,9 +237,13 @@ export default function Dashboard() {
                   }
                 }
 
-                // FIXED: Handle fallbacks cleanly for structured fields
-                const predictions = Array.isArray(infant.prediction_history) ? infant.prediction_history : [];
-                const prediction = predictions[0] || { prediction_label: "Undetermined", confidence: null };
+                // UPDATED: Custom structured field extraction logic block
+                const prediction = Array.isArray(infant.prediction_history)
+                  ? infant.prediction_history[0]
+                  : infant.prediction_history || {
+                      prediction_label: "Undetermined",
+                      confidence: null
+                    };
 
                 const doctor = infant.doctors || null;
                 const caregiver = infant.caregivers || null;
@@ -253,14 +270,9 @@ export default function Dashboard() {
                           </div>
                         </div>
 
-                        {/* Risk Badge */}
-                        <span className={`text-[10px] font-mono px-2 py-1 rounded-md uppercase font-bold border tracking-wider ${getPredictionStyle(prediction.prediction_label)}`}>
-                          {prediction.prediction_label}
-                          {prediction.confidence != null && (
-                            <span className="ml-1 opacity-70">
-                              {(prediction.confidence * 100).toFixed(0)}%
-                            </span>
-                          )}
+                        {/* Risk Badge (Confidence Hidden) */}
+                        <span className={`text-[10px] font-mono px-2 py-1 rounded-md uppercase font-bold border tracking-wider ${getPredictionStyle(prediction?.prediction_label)}`}>
+                          {prediction?.prediction_label || "Undetermined"}
                         </span>
                       </div>
 

@@ -1,17 +1,14 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { supabase } from "../supabaseClient";
-// FIXED: Added RefreshCw into the lucide-react import parameters list below
 import { 
-  Activity, ShieldAlert, Heart, Thermometer, Droplet, 
-  User, ArrowRight, ShieldCheck, HelpCircle, AlertTriangle, RefreshCw 
+  Activity, ShieldAlert, User, ArrowRight, ShieldCheck, HelpCircle, AlertTriangle, RefreshCw 
 } from "lucide-react";
 import Navbar from "./Navbar";
 
 export default function Analytics() {
   const [loading, setLoading] = useState(true);
   const [infants, setInfants] = useState([]);
-  const globalSensorRef = useRef(null);
 
   // Aggregated Metric Counters State
   const [metrics, setMetrics] = useState({
@@ -26,38 +23,12 @@ export default function Analytics() {
     // Initial data fetch
     fetchGlobalAnalytics();
 
-    // GLOBAL HARDWARE SIMULATION GATEWAY (Updates metrics for ALL infants every 5 seconds)
-    globalSensorRef.current = setInterval(async () => {
-      try {
-        // Fetch baseline records to retrieve targeted infant primary keys
-        const { data: activeBeds } = await supabase.from("infants").select("id");
-        if (!activeBeds || activeBeds.length === 0) return;
-
-        // Perform concurrent upsert tracking operations for all active entries
-        const broadcastPayloads = activeBeds.map(bed => ({
-          infant_id: bed.id,
-          heart_rate_bpm: Math.floor(125 + Math.random() * 30),
-          oxygen_saturation: Math.floor(96 + Math.random() * 4),
-          respiratory_rate_bpm: Math.floor(35 + Math.random() * 20),
-          temperature_c: parseFloat((36.6 + Math.random() * 0.8).toFixed(1))
-        }));
-
-        const { error } = await supabase
-          .from("infant_vitals")
-          .upsert(broadcastPayloads, { onConflict: 'infant_id' });
-
-        if (error) throw error;
-
-        // Pull fresh records to synchronize changes onto the UI layout
-        await fetchGlobalAnalytics(false);
-      } catch (err) {
-        console.error("Global telemetry broadcast simulation fault:", err.message);
-      }
+    // Poll fresh data from Supabase every 5 seconds
+    const interval = setInterval(() => {
+      fetchGlobalAnalytics(false);
     }, 5000);
 
-    return () => {
-      if (globalSensorRef.current) clearInterval(globalSensorRef.current);
-    };
+    return () => clearInterval(interval);
   }, []);
 
   const fetchGlobalAnalytics = async (triggerLoader = true) => {
@@ -71,11 +42,12 @@ export default function Analytics() {
           name,
           device_id,
           gender,
-          infant_vitals (
+          infant_sensor_data (
             heart_rate_bpm,
             respiratory_rate_bpm,
             temperature_c,
-            oxygen_saturation
+            movement_index,
+            recorded_at
           ),
           prediction_history (
             prediction_label,
@@ -86,16 +58,30 @@ export default function Analytics() {
 
       if (error) throw error;
 
-      // Sort sub-tables sequentially to isolate the newest entries
+      console.log("Supabase Fetch Result:", data);
+
       const processedInfants = (data || []).map(infant => {
-        const newestPrediction = infant.prediction_history?.sort(
-          (a, b) => new Date(b.created_at) - new Date(a.created_at)
-        )[0] || null;
+        const predictionData = Array.isArray(infant.prediction_history)
+          ? infant.prediction_history[0]
+          : infant.prediction_history;
+
+        let vitalsData = {};
+        if (
+          Array.isArray(infant.infant_sensor_data) &&
+          infant.infant_sensor_data.length > 0
+        ) {
+          vitalsData = [...infant.infant_sensor_data]
+            .sort(
+              (a, b) =>
+                new Date(b.recorded_at) -
+                new Date(a.recorded_at)
+            )[0];
+        }
 
         return {
           ...infant,
-          latest_prediction: newestPrediction,
-          vitals: infant.infant_vitals?.[0] || {}
+          latest_prediction: predictionData || null,
+          vitals: vitalsData || {}
         };
       });
 
@@ -115,7 +101,7 @@ export default function Analytics() {
       if (!infant.latest_prediction) {
         totals.undetermined += 1;
       } else {
-        const label = infant.latest_prediction.prediction_label?.toLowerCase();
+        const label = infant.latest_prediction.prediction_label?.toLowerCase().trim();
         if (label === "healthy" || label === "stable") totals.healthy += 1;
         else if (label === "at risk" || label === "moderate risk") totals.atRisk += 1;
         else if (label === "critical" || label === "high risk") totals.critical += 1;
@@ -126,9 +112,8 @@ export default function Analytics() {
     setMetrics(totals);
   };
 
-  // Isolates patients requiring urgent medical configuration interventions
   const highRiskRegistry = infants.filter(infant => {
-    const label = infant.latest_prediction?.prediction_label?.toLowerCase() || "";
+    const label = infant.latest_prediction?.prediction_label?.toLowerCase().trim() || "";
     return label === "at risk" || label === "moderate risk" || label === "critical" || label === "high risk";
   });
 
@@ -163,31 +148,26 @@ export default function Analytics() {
             <div className="space-y-8">
               {/* --- SECTION 1: STATS CARD ROW --- */}
               <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 font-mono">
-                {/* Total Beds */}
                 <div className="p-4 bg-zinc-900/40 border border-zinc-800 rounded-xl relative overflow-hidden">
                   <div className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Total Active Beds</div>
                   <div className="text-3xl font-black text-white mt-1">{metrics.total}</div>
                   <User className="absolute bottom-2 right-2 h-8 w-8 text-zinc-800/60" />
                 </div>
-                {/* Healthy Status */}
                 <div className="p-4 bg-zinc-900/40 border border-zinc-800 rounded-xl relative overflow-hidden border-emerald-500/20 shadow-[0_0_15px_rgba(16,185,129,0.02)]">
                   <div className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Healthy Status</div>
                   <div className="text-3xl font-black text-emerald-400 mt-1">{metrics.healthy}</div>
                   <ShieldCheck className="absolute bottom-2 right-2 h-8 w-8 text-emerald-950/40" />
                 </div>
-                {/* At Risk Status */}
                 <div className="p-4 bg-zinc-900/40 border border-zinc-800 rounded-xl relative overflow-hidden border-amber-500/20 shadow-[0_0_15px_rgba(245,158,11,0.02)]">
                   <div className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">At Risk Label</div>
                   <div className="text-3xl font-black text-amber-400 mt-1">{metrics.atRisk}</div>
                   <AlertTriangle className="absolute bottom-2 right-2 h-8 w-8 text-amber-950/40" />
                 </div>
-                {/* Critical Status */}
                 <div className="p-4 bg-zinc-900/40 border border-zinc-800 rounded-xl relative overflow-hidden border-rose-500/20 shadow-[0_0_15px_rgba(244,63,94,0.02)]">
                   <div className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Critical Status</div>
                   <div className="text-3xl font-black text-rose-500 mt-1">{metrics.critical}</div>
                   <ShieldAlert className="absolute bottom-2 right-2 h-8 w-8 text-rose-950/40" />
                 </div>
-                {/* Undetermined Status */}
                 <div className="p-4 bg-zinc-900/40 border border-zinc-800 rounded-xl relative overflow-hidden">
                   <div className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Undetermined</div>
                   <div className="text-3xl font-black text-zinc-400 mt-1">{metrics.undetermined}</div>
@@ -209,14 +189,15 @@ export default function Analytics() {
                 ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     {highRiskRegistry.map((infant) => {
-                      const isCritical = infant.latest_prediction?.prediction_label?.toLowerCase() === "critical" || infant.latest_prediction?.prediction_label?.toLowerCase() === "high risk";
+                      const label = infant.latest_prediction?.prediction_label?.toLowerCase().trim() || "";
+                      const isCritical = label === "critical" || label === "high risk";
                       
                       return (
-                        <div key={infant.id} className={`p-5 rounded-xl border bg-black/40 font-mono transition relative flex flex-col justify-between ${
+                        <div key={infant.id} className={`p-5 rounded-xl border bg-black/40 font-mono transition relative flex flex-col justify-between gap-4 ${
                           isCritical ? "border-rose-500/30 hover:border-rose-500/50" : "border-amber-500/30 hover:border-amber-500/50"
                         }`}>
                           <div>
-                            <div className="flex justify-between items-start mb-3">
+                            <div className="flex justify-between items-start">
                               <div>
                                 <h4 className="text-base font-bold text-white">{infant.name}</h4>
                                 <span className="text-[10px] text-zinc-500">{infant.device_id || "NO_DEV_ID"}</span>
@@ -226,26 +207,6 @@ export default function Analytics() {
                               }`}>
                                 {infant.latest_prediction?.prediction_label} ({Math.floor((infant.latest_prediction?.confidence || 0) * 100)}%)
                               </span>
-                            </div>
-
-                            {/* Live Telemetry Mini Grid */}
-                            <div className="grid grid-cols-4 gap-2 text-center text-[11px] bg-zinc-900/40 border border-zinc-800/60 p-2.5 rounded-lg mb-4">
-                              <div>
-                                <div className="text-[9px] text-zinc-500 uppercase">HR</div>
-                                <div className="font-bold text-zinc-200 mt-0.5">{infant.vitals.heart_rate_bpm || "---"}</div>
-                              </div>
-                              <div>
-                                <div className="text-[9px] text-zinc-500 uppercase">SpO2</div>
-                                <div className="font-bold text-cyan-400 mt-0.5">{infant.vitals.oxygen_saturation ? `${infant.vitals.oxygen_saturation}%` : "---"}</div>
-                              </div>
-                              <div>
-                                <div className="text-[9px] text-zinc-500 uppercase">RR</div>
-                                <div className="font-bold text-zinc-200 mt-0.5">{infant.vitals.respiratory_rate_bpm || "---"}</div>
-                              </div>
-                              <div>
-                                <div className="text-[9px] text-zinc-500 uppercase">Temp</div>
-                                <div className="font-bold text-orange-400 mt-0.5">{infant.vitals.temperature_c ? `${infant.vitals.temperature_c}°C` : "---"}</div>
-                              </div>
                             </div>
                           </div>
 
@@ -273,13 +234,15 @@ export default function Analytics() {
                       <tr className="border-b border-zinc-800 text-zinc-500 font-bold uppercase tracking-wider">
                         <th className="pb-3 pl-2">Patient Profile</th>
                         <th className="pb-3">Hardware Node Key</th>
-                        <th className="pb-3">Vitals Profile (HR / SpO2 / Temp)</th>
+                        <th className="pb-3">Vitals Profile (HR / RR / Temp)</th>
                         <th className="pb-3 text-right pr-2">ML Pipeline Output</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-zinc-800/40">
                       {infants.map((infant) => {
                         const statusLabel = infant.latest_prediction?.prediction_label || "Undetermined";
+                        const normalizedLabel = statusLabel.toLowerCase().trim();
+
                         return (
                           <tr key={infant.id} className="hover:bg-zinc-900/30 transition-colors group">
                             <td className="py-3.5 pl-2 font-bold text-white group-hover:text-cyan-400 transition">
@@ -289,7 +252,7 @@ export default function Analytics() {
                             <td className="py-3.5 text-zinc-300">
                               {infant.vitals.heart_rate_bpm ? (
                                 <span>
-                                  {infant.vitals.heart_rate_bpm} bpm / <span className="text-cyan-400">{infant.vitals.oxygen_saturation}%</span> / <span className="text-orange-400">{infant.vitals.temperature_c}°C</span>
+                                  {infant.vitals.heart_rate_bpm} bpm / <span className="text-cyan-400">{infant.vitals.respiratory_rate_bpm} rr</span> / <span className="text-orange-400">{infant.vitals.temperature_c}°C</span>
                                 </span>
                               ) : (
                                 <span className="text-zinc-600">Off-line</span>
@@ -297,9 +260,9 @@ export default function Analytics() {
                             </td>
                             <td className="py-3.5 text-right pr-2">
                               <span className={`px-2 py-0.5 rounded text-[10px] font-bold border uppercase tracking-wide ${
-                                statusLabel.toLowerCase() === "healthy" || statusLabel.toLowerCase() === "stable" ? "bg-emerald-950/30 text-emerald-400 border-emerald-500/20" :
-                                statusLabel.toLowerCase() === "at risk" || statusLabel.toLowerCase() === "moderate risk" ? "bg-amber-950/30 text-amber-400 border-amber-500/20" :
-                                statusLabel.toLowerCase() === "critical" || statusLabel.toLowerCase() === "high risk" ? "bg-rose-950/30 text-rose-400 border-rose-500/20" :
+                                normalizedLabel === "healthy" || normalizedLabel === "stable" ? "bg-emerald-950/30 text-emerald-400 border-emerald-500/20" :
+                                normalizedLabel === "at risk" || normalizedLabel === "moderate risk" ? "bg-amber-950/30 text-amber-400 border-amber-500/20" :
+                                normalizedLabel === "critical" || normalizedLabel === "high risk" ? "bg-rose-950/30 text-rose-400 border-rose-500/20" :
                                 "bg-zinc-900 text-zinc-500 border-zinc-800"
                               }`}>
                                 {statusLabel}

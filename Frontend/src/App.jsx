@@ -10,10 +10,16 @@ import Profile from "./Components/Profile";
 import InfantProfile from "./Components/InfantProfile";
 import AddInfant from './Components/AddInfant';
 import { BrowserRouter, Route, Routes } from 'react-router-dom'
+import { startPredictionMonitor } from "./services/predictionMonitor";
+import { useEffect } from 'react';
 
 import './App.css'
 
 function App() {
+
+  useEffect(() => {
+    startPredictionMonitor();
+  }, []);
 
   return (
     <>
