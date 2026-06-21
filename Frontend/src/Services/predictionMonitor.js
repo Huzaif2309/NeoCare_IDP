@@ -4,6 +4,12 @@ const FASTAPI_URL = "http://localhost:8000";
 
 let intervalRef = null;
 
+// Labels that should trigger an alert (anything that isn't safe)
+const ALERT_LABELS = new Set(["High Risk", "Moderate Risk", "Low Risk"]);
+
+// Track the last label we fired an alert for, per infant
+const lastAlertedLabel = {};
+
 export async function runPredictionCycle() {
   try {
     console.log("Running prediction cycle...");
@@ -11,7 +17,7 @@ export async function runPredictionCycle() {
     // Get all infants
     const { data: infants, error } = await supabase
       .from("infants")
-      .select("id");
+      .select("id, name");
 
     if (error) throw error;
 
@@ -65,6 +71,31 @@ export async function runPredictionCycle() {
             insertError.message
           );
         }
+
+        // Fire alert only when transitioning into an alerting state
+        const prev = lastAlertedLabel[infant.id];
+        if (ALERT_LABELS.has(prediction) && prediction !== prev) {
+          lastAlertedLabel[infant.id] = prediction;
+
+          // Notify in-app toast via window event (picked up by App.jsx)
+          window.dispatchEvent(
+            new CustomEvent("neocare-alert", {
+              detail: { infantName: infant.name || infant.id, label: prediction, confidence },
+            })
+          );
+
+          // Notify backend (email + push) — fire and forget
+          fetch(`${FASTAPI_URL}/alert`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ infant_id: infant.id, label: prediction, confidence }),
+          }).catch((err) => console.error("Alert request failed:", err.message));
+
+        } else if (!ALERT_LABELS.has(prediction)) {
+          // Reset so the next time this infant enters an alerting state it fires again
+          delete lastAlertedLabel[infant.id];
+        }
+
       } catch (err) {
         console.error(
           `Prediction cycle failed for infant ${infant.id}:`,
